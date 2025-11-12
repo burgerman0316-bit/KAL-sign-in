@@ -1,6 +1,6 @@
 // server.js - Node.js Express Server for Google Sign-In Verification
 const express = require('express');
-const path = require('path');
+const path = require('path'); // <-- Added explicit path require for robustness
 const { OAuth2Client } = require('google-auth-library');
 
 // --- Configuration via Environment Variables ---
@@ -9,8 +9,10 @@ const TARGET_URL = process.env.TARGET_URL || 'https://sites.google.com/kaneland.
 const PORT = process.env.PORT || 3000;
 
 if (!CLIENT_ID) {
-    console.error("FATAL: CLIENT_ID environment variable is not set. Cannot run server.");
-    process.exit(1);
+    // Crucial check: if CLIENT_ID is missing, the server cannot verify tokens and must crash.
+    console.error("FATAL ERROR: CLIENT_ID environment variable is not set.");
+    console.error("Please configure the CLIENT_ID in your Railway project variables.");
+    process.exit(1); 
 }
 
 const app = express();
@@ -21,6 +23,7 @@ app.use(express.json());
 
 // Serve the static HTML file for the login page
 app.get('/', (req, res) => {
+    // Use the absolute path to ensure the file is always found regardless of the execution context
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
@@ -30,7 +33,6 @@ const RESTRICTED_EMAILS = new Set([
     "blockeduser2@kaneland.org",
     "user_to_deny@kaneland.org",
     // Add all specific emails you want to restrict here. 
-    // This list is only visible on the server, making it secure.
 ]);
 
 /**
@@ -59,7 +61,7 @@ app.post('/verify-token', async (req, res) => {
     // 2. Extract the email from the verified payload
     const email = payload['email'].toLowerCase();
     
-    // Check if the user is from the required domain for extra safety (optional, but good practice)
+    // Check if the user is from the required domain for extra safety
     if (!email.endsWith('@kaneland.org')) {
         return res.status(403).json({ success: false, message: 'Access denied: Must sign in with a @kaneland.org account.' });
     }
@@ -80,6 +82,6 @@ app.listen(PORT, () => {
     console.log(`\n======================================================`);
     console.log(`✅ Server is running on port ${PORT}`);
     console.log(`🔗 Target URL: ${TARGET_URL}`);
-    console.log(`🌐 Serving login gate at http://localhost:${PORT}`);
+    console.log(`🌐 Serving login gate on internal port ${PORT}`);
     console.log(`======================================================\n`);
 });
