@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Restricted Site Access</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for the dark, modern look */
+        body {
+            background-color: #000;
+            font-family: Arial;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .login-card {
+            backdrop-filter: blur(10px);
+            background-color: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .google-btn-icon {
+            content: '';
+            width: 24px;
+            height: 24px;
+            background: url('https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg') no-repeat center center;
+            background-size: contain;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app" class="p-6 md:p-10 rounded-xl shadow-2xl login-card max-w-sm w-11/12 text-white transition-all duration-300">
+        <h1 class="text-3xl font-extrabold mb-8 text-center" id="main-title">Site Access Required</h1>
+
+        <!-- Status/Prompt Area -->
+        <div id="status-message" class="text-center mb-6 text-gray-300">
+            Sign in with your approved Google account to proceed to the school site.
+        </div>
+
+        <!-- Google Sign-In Button -->
+        <button id="google-sign-in-btn"
+                class="w-full flex items-center justify-center space-x-3 py-3 px-4 bg-white text-gray-900 font-semibold rounded-lg shadow-md hover:bg-gray-100 transition duration-150 transform hover:scale-[1.01] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">
+            <span class="google-btn-icon"></span>
+            <span>Sign in with Google</span>
+        </button>
+
+        <!-- Loading Indicator -->
+        <div id="loading-spinner" class="hidden text-center mt-4">
+            <svg class="animate-spin h-5 w-5 text-gray-400 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span class="text-sm mt-2 block text-gray-400">Checking access...</span>
+        </div>
+
+        <!-- Admin/Debug Info -->
+        <div class="text-xs text-gray-500 mt-6 pt-4 border-t border-gray-700">
+            <p><strong>Authenticated User ID (for reference):</strong> <span id="user-id-display">N/A</span></p>
+            <p>To configure allowed users, add a document to the 'allowed_emails' collection in Firestore.</p>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // IMPORTANT: Set this to the actual URL of your Google Site!
+        const TARGET_SITE_URL = 'https://sites.google.com/kaneland.org/kanelandapplicationlauncher';
+        // Firestore Collection and Document to store the allowed emails list
+        const COLLECTION_NAME = 'allowed_emails';
+        const DOCUMENT_ID = 'list';
+        // The list of allowed emails in the database document must be stored in this field name:
+        const ALLOWED_EMAILS_FIELD = 'allowedEmails';
+
+        // --- Global Variables and DOM Elements ---
+        let app;
+        let db;
+        let auth;
+        let userId = 'N/A';
+
+        const signInBtn = document.getElementById('google-sign-in-btn');
+        const statusMessage = document.getElementById('status-message');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const userIdDisplay = document.getElementById('user-id-display');
+
+        // --- Helper Functions ---
+
+        /** Shows an error state */
+        function showError(message) {
+            statusMessage.textContent = message;
+            statusMessage.classList.remove('text-gray-300', 'text-green-400');
+            statusMessage.classList.add('text-red-400');
+            signInBtn.classList.add('hidden');
+        }
+
+        /** Checks the signed-in user's email against the allowed list in Firestore */
+        async function checkAccess(email) {
+            loadingSpinner.classList.remove('hidden');
+            signInBtn.classList.add('hidden');
+            statusMessage.textContent = 'Checking access for ' + email + '...';
+
+            try {
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                
+                // Firestore security rule path for public data: /artifacts/{appId}/public/data/{COLLECTION_NAME}/{DOCUMENT_ID}
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', COLLECTION_NAME, DOCUMENT_ID);
+                const docSnap = await getDoc(docRef);
+
+                let allowedEmails = [];
+
+                if (docSnap.exists()) {
+                    allowedEmails = docSnap.data()[ALLOWED_EMAILS_FIELD] || [];
+                    console.log("Found allowed emails list:", allowedEmails);
+                } else {
+                    // If document doesn't exist, we will create a mock one for the user's initial setup
+                    // This is for demonstration; in a real app, the admin sets this up.
+                    const mockAllowedEmails = [
+                        'admin@example.edu', // Replace with a known allowed email
+                        'teacher@yourschool.com',
+                        'student1@yourschool.org',
+                        email // Automatically add the current user if list is empty for easy testing
+                    ];
+                    await setDoc(docRef, { [ALLOWED_EMAILS_FIELD]: mockAllowedEmails });
+                    allowedEmails = mockAllowedEmails;
+                    console.warn("Allowed emails list not found. Created a mock list for setup.");
+                }
+
+                // --- Access Control Logic ---
+                if (allowedEmails.map(e => e.toLowerCase()).includes(email.toLowerCase())) {
+                    // Success: Redirect the user
+                    statusMessage.textContent = 'Access Granted! Redirecting now...';
+                    statusMessage.classList.remove('text-gray-300', 'text-red-400');
+                    statusMessage.classList.add('text-green-400');
+
+                    setTimeout(() => {
+                        window.location.href = TARGET_SITE_URL;
+                    }, 1000); // Wait 1 second before redirecting
+                } else {
+                    // Failure: Deny access and show message
+                    showError('Access Denied. Your email (' + email + ') is not on the approved list.');
+                }
+
+            } catch (error) {
+                console.error("Error checking access or fetching list:", error);
+                showError("A system error occurred during access check. Please try again or contact support.");
+            } finally {
+                loadingSpinner.classList.add('hidden');
+            }
+        }
+
+        /** Handles the Google Sign-In process */
+        async function handleGoogleSignIn() {
+            const provider = new GoogleAuthProvider();
+            try {
+                // Show a loading state immediately
+                statusMessage.textContent = 'Waiting for Google Sign-In...';
+                signInBtn.disabled = true;
+
+                const result = await signInWithPopup(auth, provider);
+                const user = result.user;
+                const email = user.email;
+
+                if (!email) {
+                     showError("Could not retrieve email address from Google account. Please try again.");
+                     return;
+                }
+
+                await checkAccess(email);
+
+            } catch (error) {
+                console.error("Google Sign-In Error:", error);
+                // Handle common errors like user closing the pop-up
+                if (error.code === 'auth/popup-closed-by-user') {
+                    showError('Sign-in cancelled. Please click the button to try again.');
+                } else {
+                    showError('Sign-in failed. Error: ' + error.message);
+                }
+            } finally {
+                signInBtn.disabled = false;
+            }
+        }
+
+        // --- Initialization and Event Listeners ---
+        window.onload = function() {
+            // Check for Firebase config presence
+            if (typeof __firebase_config === 'undefined') {
+                 showError("Firebase configuration is missing. Cannot initialize authentication.");
+                 return;
+            }
+
+            const firebaseConfig = JSON.parse(__firebase_config);
+            setLogLevel('Debug'); // Enable Firestore logging
+
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // 1. Initial Authentication (Canvas environment custom token or Anonymous)
+                async function initialAuth() {
+                    const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                    try {
+                        if (token) {
+                            await signInWithCustomToken(auth, token);
+                        } else {
+                            // Anonymous sign-in is a fallback if no custom token is provided
+                            await signInAnonymously(auth);
+                        }
+                        console.log("Initial Firebase authentication successful.");
+                    } catch (e) {
+                        console.error("Initial authentication failed:", e);
+                    }
+                }
+                initialAuth(); // Start auth process
+
+                // 2. Auth State Listener (Reacts to initial auth and later Google Sign-In)
+                onAuthStateChanged(auth, (user) => {
+                    userId = user ? user.uid : 'N/A';
+                    userIdDisplay.textContent = userId;
+
+                    // If the user is already signed in with Google (e.g., refreshing the page)
+                    if (user && user.providerData && user.providerData.length > 0 && user.email) {
+                        console.log("User already signed in with Google. Checking access...");
+                        checkAccess(user.email);
+                    } else {
+                        // User is anonymous or logged out, show the sign-in button
+                        signInBtn.classList.remove('hidden');
+                        loadingSpinner.classList.add('hidden');
+                        statusMessage.textContent = 'Sign in with your approved Google account to proceed to the school site.';
+                    }
+                });
+
+                // 3. Event Listener for the Google Sign-In Button
+                signInBtn.addEventListener('click', handleGoogleSignIn);
+
+            } catch (error) {
+                console.error("Firebase Initialization Error:", error);
+                showError("Failed to initialize the application. Check console for details.");
+            }
+        };
+
+    </script>
+</body>
+</html>
+
